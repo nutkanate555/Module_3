@@ -987,7 +987,7 @@ void EncoderVelocityAndPosition_Update()
 	EstimatedAngularAcceration = ( Acceration_Output );
 
 }
-aaa
+
 
 void Encoder_SetHome_Position()
 {
