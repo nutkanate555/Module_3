@@ -217,6 +217,7 @@ uint8_t GripperStatus[1] = {0};
 uint64_t Timestamp_Gripper = 0;
 
 uint8_t AcceptableError = 3;
+float StabilizePosition = 0;
 
 PIDStructure PositionPIDController = {0};
 PIDStructure VelocityPIDController  = {0};
@@ -249,8 +250,6 @@ void TrajectoryGenerationPrepareDATA();
 void TrajectoryGenerationCalculation();
 void TrajectoryGenerationProcess();
 
-void VelocityControllerInit(PIDStructure *VCvar,TrajectoryGenerationStructure *TGSvar);
-void DisplacementControllerInit(PIDStructure *VCvar,TrajectoryGenerationStructure *TGSvar);
 void PIDController2in1();
 
 void UARTInit(UARTStucrture *uart);
@@ -271,10 +270,16 @@ void LAMP_ON(uint8_t lampnumber);
 void Emergency_switch_trigger();
 
 void Controlling_the_LINK();
+void Stabilizing_the_LINK( float Position );
+
 void SETHOME_StateMachine_Function();
 void SETHOME_TrajectoryGenerationPrepareDATA();
 
 void UpdateMunmunBotState();
+void EndEffectorWorkingState();
+
+void StabilizerPIDLoad();
+void LinkMovingPIDLoad();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -330,10 +335,10 @@ int main(void)
   ConverterUnitSystemStructureInit(&CUSSStruc);
   TrajectoryGenerationStructureInit(&TrjStruc, &CUSSStruc);
 
-  VelocityControllerInit(&VelocityPIDController, &TrjStruc);
-  DisplacementControllerInit(&PositionPIDController, &TrjStruc);
+  StabilizerPIDLoad();
 
-  htim1.Instance->CNT = CUSSStruc.PPRxQEI;
+
+  Encoder_SetHome_Position();
 
   ///UART init
   UART2.huart = &huart2;
@@ -376,7 +381,7 @@ int main(void)
 
 	  	  case STATE_Idle:
 	  		  LAMP_ON(1);
-	  		  UpdateMunmunBotState();
+	  		  Stabilizing_the_LINK( StabilizePosition );
 	  		  if ( sethomeTrigger == 1 )
 	  		  {
 	  			  Encoder_SetHome_Position();
@@ -406,144 +411,37 @@ int main(void)
 	   		  {
 	   			  Controlling_the_LINK();
 
-	   			  ///////////////////////////////////////////////////////////////////
-//	   			  PositionPIDController.OutputFeedback = TrjStruc.AngularDisplacementDesire;
-	   			  ///////////////////////////////////////////////////////////////////
-	   			  if (PIDTunerMode == 0)
-	   			  {
-					  if ((PositionPIDController.OutputFeedback <= TrjStruc.Desire_Theta + AcceptableError) &&
-							  (PositionPIDController.OutputFeedback >= TrjStruc.Desire_Theta - AcceptableError) &&
-							  (Moving_Link_Task_Flag == 1))
-					  {
-						  if(MovingLinkMode == LMM_Set_Pos_Directly)
-						  {
-							Munmunbot_State = STATE_Idle;
-							MovingLinkMode = LMM_Not_Set;
-							TrjStruc.Start_Theta =  PositionPIDController.OutputFeedback;
-							__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
-							ACK2Return(&UART2);
-						  }
 
-						  else if ((MovingLinkMode == LMM_Set_Goal_1_Station) || (MovingLinkMode == LMM_Set_Goal_n_Station))
-						  {
-							Munmunbot_State = STATE_End_Effector_Working;
-							GripperState = 0;
-							__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
-						  }
-//						 TrjStruc.Start_Theta = PositionPIDController.OutputFeedback;  //set new start theta
-//						 TrjStruc.AngularVelocityDesire = 0;
-//						 VelocityPIDController.OutputFeedback = 0;
-//						 EstimatedAngularAcceration = 0;
-						 Moving_Link_Task_Flag = 0;
-						 PID_Reset();
-					  }
-	   			  }
-	   			  else if (PIDTunerMode == 1)
-	   			  {
-					  if (Moving_Link_Task_Flag == 1)
+				  if ((PositionPIDController.OutputFeedback <= TrjStruc.Desire_Theta + AcceptableError) &&
+						  (PositionPIDController.OutputFeedback >= TrjStruc.Desire_Theta - AcceptableError) &&
+						  (Moving_Link_Task_Flag == 1))
+				  {
+					  if(MovingLinkMode == LMM_Set_Pos_Directly)
 					  {
-						  PIDTunerMode = 0;
-						  if(MovingLinkMode == LMM_Set_Pos_Directly)
-						  {
-							Munmunbot_State = STATE_Idle;
-							MovingLinkMode = LMM_Not_Set;
-							TrjStruc.Start_Theta =  PositionPIDController.OutputFeedback;
-							__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
-							ACK2Return(&UART2);
-						  }
-
-						  else if ((MovingLinkMode == LMM_Set_Goal_1_Station) || (MovingLinkMode == LMM_Set_Goal_n_Station))
-						  {
-							Munmunbot_State = STATE_End_Effector_Working;
-							GripperState = 0;
-							__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
-						  }
-//						 TrjStruc.Start_Theta = PositionPIDController.OutputFeedback;  //set new start theta
-//						 TrjStruc.AngularVelocityDesire = 0;
-//						 VelocityPIDController.OutputFeedback = 0;
-//						 EstimatedAngularAcceration = 0;
-						 Moving_Link_Task_Flag = 0;
-						 PID_Reset();
+						Munmunbot_State = STATE_Idle;
+						MovingLinkMode = LMM_Not_Set;
+						StabilizePosition = TrjStruc.Desire_Theta;
+						ACK2Return(&UART2);
 					  }
-	   			  }
+
+					  else if ((MovingLinkMode == LMM_Set_Goal_1_Station) || (MovingLinkMode == LMM_Set_Goal_n_Station))
+					  {
+						Munmunbot_State = STATE_End_Effector_Working;
+						GripperState = 0;
+						StabilizePosition = TrjStruc.Desire_Theta;
+					  }
+					 Moving_Link_Task_Flag = 0;
+					 PID_Reset();
+				  }
+
+
 	   		  }
 	  		  Emergency_switch_trigger();
 	  		  break;
 
 	  	  case STATE_End_Effector_Working:
-	  		  UpdateMunmunBotState();
-	  		  ///I2C implement
-	  		  if(GripperEnable == 1)
-	  		  {
-//	  			if ((hi2c1.State == HAL_I2C_STATE_READY) && (GripperState == 0))
-	  			if (GripperState == 0)
-	  			{
-	  				{
-	  					uint8_t temp[1] = {0x45};
-	  					HAL_I2C_Master_Transmit_IT(&hi2c1, (0x23 << 1) , temp, 1);
-	  				}
-	  				GripperState = 1;
-	  				Timestamp_Gripper = micros();
-	  			}
-
-	  			else if (GripperState != 0)
-	  			{
-	  				if ((hi2c1.State == HAL_I2C_STATE_READY) && (GripperState == 1))
-	  				{
-	  					{
-							uint8_t temp[1] = {0x23};
-							HAL_I2C_Master_Transmit_IT(&hi2c1, (0x23 << 1) , temp, 1);
-						}
-	  					GripperState = 2;
-	  				}
-
-	  				else if ((hi2c1.State == HAL_I2C_STATE_READY) && ( GripperState == 2 ))
-	  				{
-	  					{
-//							uint8_t temp[1] = {0x23};
-//							HAL_I2C_Master_Transmit_IT(&hi2c1, (0x23 << 1) , temp, 1);
-							HAL_I2C_Master_Receive_IT(&hi2c1, ((0x23 << 1) | 0b1), GripperStatus, 1);
-						}
-	  					GripperState = 1;
-	  				}
-	  				if (GripperStatus[0] == 0x12 )
-	  				{
-	  					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, 1);
-						HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 1);
-						HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 0);
-	  				}
-	  				else if (GripperStatus[0] == 0x34)
-	  				{
-	  					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, 1);
-	  					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 0);
-	  					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 0);
-	  				}
-	  				else if (GripperStatus[0] == 0x56)
-	  				{
-	  					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, 0);
-						HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 0);
-						HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 0);
-	  				}
-	  				else if (GripperStatus[0] == 0x78)
-	  				{
-	  					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, 1);
-						HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 1);
-						HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 1);
-	  				}
-
-	  				if (micros() - Timestamp_Gripper >= 5100000)
-					{
-						GripperState = 0;
-						Munmunbot_State = STATE_PrepareDATA;
-					}
-	  			}
-
-
-	  		  }
-	  		  else if(GripperEnable == 0)
-			  {
-		  		 Munmunbot_State = STATE_PrepareDATA;
-			  }
+	  		  Stabilizing_the_LINK( StabilizePosition );
+	  		  EndEffectorWorkingState();
 	  		  Emergency_switch_trigger();
 	  		  break;
 
@@ -992,6 +890,7 @@ void EncoderVelocityAndPosition_Update()
 void Encoder_SetHome_Position()
 {
 	HTIM_ENCODER.Instance->CNT = CUSSStruc.PPRxQEI;
+	StabilizePosition = CUSSStruc.PPRxQEI;
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
@@ -1004,27 +903,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    if(GPIO_Pin == GPIO_PIN_13) // If The INT Source Is EXTI Line15 -> index  ///13 for test
+    if ((GPIO_Pin == GPIO_PIN_13) || (GPIO_Pin == GPIO_PIN_8))  //13 -> BlueButton, 8 -> Limitswitch
 	{
     	if (Munmunbot_State == STATE_SetHome)
     	{
     		if (SethomeMode == SetHomeState_1)
     		{
-    			HTIM_ENCODER.Instance->CNT = CUSSStruc.PPRxQEI;
-    			SethomeMode = SetHomeState_2;
-    			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, 0);
-				__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
-    		}
-    	}
-	}
-
-    if(GPIO_Pin == GPIO_PIN_8) // LimitSwitch
-	{
-    	if (Munmunbot_State == STATE_SetHome)
-    	{
-    		if (SethomeMode == SetHomeState_1)
-    		{
-    			HTIM_ENCODER.Instance->CNT = CUSSStruc.PPRxQEI;
+    			Encoder_SetHome_Position();
     			SethomeMode = SetHomeState_2;
     			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, 0);
 				__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
@@ -1049,7 +934,6 @@ void ConverterUnitSystemStructureInit(ConverterUnitSystemStructure *CUSSvar)
 void TrajectoryGenerationStructureInit(TrajectoryGenerationStructure *TGSvar , ConverterUnitSystemStructure *CUSSvar)
 {
 	TGSvar->AngularAccerationMax_Setting = (0.4*(CUSSvar->PPRxQEI))/(3.1416*2.0);
-//	TGSvar->AngularAccerationMax_Setting = (0.5*(CUSSvar->PPRxQEI))/(3.1416*2.0);
 	TGSvar->AngularVelocityMax_Setting = ((CUSSvar->PPRxQEI)*10)/(60.0);  //pps
 	TGSvar->Start_Theta = CUSSStruc.PPRxQEI;  /// PPRxQEI == 0 degree
 	TGSvar->Mode = 0;
@@ -1063,40 +947,38 @@ void TrajectoryGenerationStructureInit(TrajectoryGenerationStructure *TGSvar , C
 
 }
 
-void VelocityControllerInit(PIDStructure *VCvar,TrajectoryGenerationStructure *TGSvar)
+void LinkMovingPIDLoad()
 {
-	//Onnalin
-//	VCvar->Kp = 3;
-//	VCvar->Ki = 20;
-//	VCvar->Kd = 0.005;
+	PositionPIDController.Kp = 0.5;
+	PositionPIDController.Ki = 1.1;
+	PositionPIDController.Kd = 0.01;
+	PositionPIDController.offSet = 0;
+	PositionPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 
-	//Tin
-	VCvar->Kp = 5.3;
-	VCvar->Ki = 15;
-	VCvar->Kd = 0.06;
-	VCvar->offSet = 1500;
-//	VCvar->offSet = 1800;
-	VCvar->Integral_Value = 0;
-	VCvar->SamplingTime = (TGSvar->Loop_Period)/1000000.0;
+	VelocityPIDController.Kp = 5.3;
+	VelocityPIDController.Ki = 15;
+	VelocityPIDController.Kd = 0.06;
+	VelocityPIDController.offSet = 1500;
+	VelocityPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 }
 
-void DisplacementControllerInit(PIDStructure *VCvar,TrajectoryGenerationStructure *TGSvar)
+
+void StabilizerPIDLoad()
 {
-	//Onnalin
-//	VCvar->Kp = 0.5;
-//	VCvar->Ki = 4;
-//	VCvar->Kd = 0;
+	PositionPIDController.Kp = 0.5;
+	PositionPIDController.Ki = 1.1;
+	PositionPIDController.Kd = 0.01;
+	PositionPIDController.offSet = 0;
+	PositionPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 
-	//Tin
-	VCvar->Kp = 0.5;
-	VCvar->Ki = 1.1;
-	VCvar->Kd = 0.01;
-
-
-	VCvar->offSet = 0;
-	VCvar->Integral_Value = 0;
-	VCvar->SamplingTime = (TGSvar->Loop_Period)/1000000.0;
+	VelocityPIDController.Kp = 0;
+	VelocityPIDController.Ki = 0;
+	VelocityPIDController.Kd = 0;
+	VelocityPIDController.offSet = 0;
+	VelocityPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 }
+
+
 
 void TrajectoryGenerationVelocityMaxSetting(TrajectoryGenerationStructure *TGSvar , ConverterUnitSystemStructure *CUSSvar)
 {
@@ -1390,52 +1272,6 @@ void PIDController2in1()
 					  +( TrjStruc.Alpha * VelocityPIDController.offSet );
     VelocityPIDController.PreviousError = VelocityPIDController.NowError;
 
-	// Error term
-//	PositionPIDController.OutputDesire = TrjStruc.AngularDisplacementDesire;
-//	PositionPIDController.NowError = PositionPIDController.OutputDesire - PositionPIDController.OutputFeedback;
-//
-//	// Update integral Value
-//	PositionPIDController.Integral_Value += PositionPIDController.NowError;
-//
-//
-//	PositionPIDController.ControllerOutput = (PositionPIDController.Kp*PositionPIDController.NowError)
-//					  +(PositionPIDController.Ki * PositionPIDController.Integral_Value)
-//					  +(PositionPIDController.Kd * (PositionPIDController.NowError-PositionPIDController.PreviousError))
-//					  +( TrjStruc.Alpha * PositionPIDController.offSet);
-//	PositionPIDController.PreviousError = PositionPIDController.NowError;
-
-
-    // Error Term
-//    VelocityPIDController.OutputDesire = PositionPIDController.ControllerOutput + TrjStruc.AngularVelocityDesire;
-//    VelocityPIDController.NowError = VelocityPIDController.OutputDesire - VelocityPIDController.OutputFeedback;
-
-//    // Calculate Output of the Controller
-//    VelocityPIDController.ControllerOutput = VelocityPIDController.PreviousControllerOutput +
-//    		(( VelocityPIDController.Kp + VelocityPIDController.Ki + VelocityPIDController.Kd ) * VelocityPIDController.NowError ) -
-//			(( VelocityPIDController.Kp + ( 2.0 * VelocityPIDController.Kd )) * VelocityPIDController.PreviousError ) +
-//			( VelocityPIDController.Kd *  VelocityPIDController.PreviousPreviousError )
-//			 +( TrjStruc.Alpha * VelocityPIDController.offSet );
-
-
-    // Updating Process
-//    VelocityPIDController.PreviousPreviousError = VelocityPIDController.PreviousError;
-//    VelocityPIDController.PreviousError = VelocityPIDController.NowError;
-//    VelocityPIDController.PreviousControllerOutput =  VelocityPIDController.ControllerOutput;
-
-//	// Error term
-//	VelocityPIDController.OutputDesire = PositionPIDController.ControllerOutput + TrjStruc.AngularVelocityDesire;
-//	VelocityPIDController.NowError = VelocityPIDController.OutputDesire - VelocityPIDController.OutputFeedback;
-//
-//	// Update integral Value
-//	VelocityPIDController.Integral_Value += VelocityPIDController.NowError;
-//
-//
-//	VelocityPIDController.ControllerOutput = (VelocityPIDController.Kp*VelocityPIDController.NowError)
-//					  +(VelocityPIDController.Ki * PositionPIDController.Integral_Value)
-//					  +(VelocityPIDController.Kd * (VelocityPIDController.NowError-VelocityPIDController.PreviousError))
-//					  +( TrjStruc.Alpha * VelocityPIDController.offSet);
-//	VelocityPIDController.PreviousError = VelocityPIDController.NowError;
-
 }
 
 
@@ -1654,6 +1490,7 @@ void Munmunbot_Protocol(int16_t dataIn,UARTStucrture *uart)
 						if (Munmunbot_State == STATE_Disconnected)
 						{
 							Munmunbot_State = STATE_Idle;
+							PID_Reset();
 						}
 						ACK1Return(uart);
 						break;
@@ -1706,6 +1543,7 @@ void Munmunbot_Protocol(int16_t dataIn,UARTStucrture *uart)
 						if (Munmunbot_State == STATE_Idle)
 						{
 							Munmunbot_State = STATE_PrepareDATA;
+							PID_Reset();
 							ACK1Return(uart);
 						}
 						else
@@ -1741,7 +1579,6 @@ void Munmunbot_Protocol(int16_t dataIn,UARTStucrture *uart)
 							{0x58 , 0x75 ,154, 0b0,  0b0, 0b0};
 							uint8_t Shift = 2;
 							DataForReturn = ((((int) htim1.Instance->CNT) % (CUSSStruc.PPRxQEI))*2*3.141*10000)/(CUSSStruc.PPRxQEI);  ///pulse to (radian*10000)
-//							DataForReturn = ((((int) PositionPIDController.OutputFeedback) % (CUSSStruc.PPRxQEI))*2*3.141*10000)/(CUSSStruc.PPRxQEI);  ///pulse to (radian*10000)
 							temp[1+Shift] = (DataForReturn>>8)&(0xff);
 							temp[2+Shift] = (DataForReturn)&(0xff);
 							temp[3+Shift] = ~(temp[0+Shift]+temp[1+Shift]+temp[2+Shift]);
@@ -1754,7 +1591,6 @@ void Munmunbot_Protocol(int16_t dataIn,UARTStucrture *uart)
 							uint8_t temp[] =
 							{ 0x58, 0x75, 155, 0b0,  0b0, 0b0 };
 							uint8_t Shift = 2;
-//							float temp2  = ( TrjStruc.AngularVelocityMax_Setting*60.0 )/( ( float ) CUSSStruc.PPRxQEI );  ///pps to RPM
 							float temp3 = ( abs( VelocityPIDController.OutputFeedback )*60.0 )/( ( float ) CUSSStruc.PPRxQEI );
 							DataForReturn = ( temp3 * 255.0 )/10.0;
 							temp[ 1+Shift ] = ( DataForReturn>>8 )&( 0xff );
@@ -1784,6 +1620,7 @@ void Munmunbot_Protocol(int16_t dataIn,UARTStucrture *uart)
 						{
 							Munmunbot_State = STATE_SetHome;
 							SethomeMode = SetHomeState_0;
+							PID_Reset();
 						}
 						ACK1Return(uart);
 						break;
@@ -1806,8 +1643,6 @@ void PID_Reset()
 	PositionPIDController.Integral_Value = 0;
 	PositionPIDController.ControllerOutput = 0;
 	PositionPIDController.NowError = 0;
-	PositionPIDController.OutputDesire = htim1.Instance->CNT;
-	PositionPIDController.OutputFeedback = htim1.Instance->CNT;
 	PositionPIDController.PreviousPreviousError = 0;
 	PositionPIDController.PreviousControllerOutput = 0;
 
@@ -1816,8 +1651,6 @@ void PID_Reset()
 	VelocityPIDController.Integral_Value = 0;
 	VelocityPIDController.ControllerOutput = 0;
 	VelocityPIDController.NowError = 0;
-	VelocityPIDController.OutputDesire = 0;
-	VelocityPIDController.OutputFeedback = 0;
 	VelocityPIDController.PreviousPreviousError = 0;
 	VelocityPIDController.PreviousControllerOutput = 0;
 }
@@ -1893,6 +1726,7 @@ void Controlling_the_LINK()
 	  // GEN Trajectory
 	  TrajectoryGenerationProcess();
 	  EncoderVelocityAndPosition_Update();
+	  LinkMovingPIDLoad();
 	  PIDController2in1();  ///use only position
 //	  Plant_input = PositionPIDController.ControllerOutput;
 	  Plant_input = VelocityPIDController.ControllerOutput;
@@ -1917,6 +1751,39 @@ void Controlling_the_LINK()
 
 	  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, DCMotorStruc.PWMOut); ///Setting PWM Pin
 	  TrjStruc.Loop_Timestamp = micros();
+}
+
+void Stabilizing_the_LINK( float Position )
+{
+	if (micros()-TrjStruc.Loop_Timestamp >=  TrjStruc.Loop_Period)
+	{
+		StabilizerPIDLoad();
+		TrjStruc.AngularDisplacementDesire = Position;
+		EncoderVelocityAndPosition_Update();
+		PIDController2in1();  ///use only position
+		Plant_input = PositionPIDController.ControllerOutput;
+
+		if (Plant_input >= 0) /// Setting DIR
+		{
+		  DCMotorStruc.DIR = 1;
+		  DCMotorStruc.PWMOut = (uint32_t) (Plant_input);
+		}
+		else if (Plant_input < 0)
+		{
+		  DCMotorStruc.DIR = 0;
+		  DCMotorStruc.PWMOut = (uint32_t) (Plant_input * -1.0);
+		}
+
+		if (DCMotorStruc.PWMOut > 10000)   /// Saturation Output
+		{
+		 DCMotorStruc.PWMOut = 10000;
+		}
+
+		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, DCMotorStruc.DIR);
+
+		__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, DCMotorStruc.PWMOut); ///Setting PWM Pin
+		TrjStruc.Loop_Timestamp = micros();
+	}
 }
 
 void SETHOME_StateMachine_Function()
@@ -1955,6 +1822,131 @@ void UpdateMunmunBotState()
 		TrjStruc.Loop_Timestamp = micros();
 	}
 }
+
+void EndEffectorWorkingState()
+{
+	  if(GripperEnable == 1)
+	  {
+		if (GripperState == 0)
+		{
+			{
+				uint8_t temp[1] = {0x45};
+				HAL_I2C_Master_Transmit_IT(&hi2c1, (0x23 << 1) , temp, 1);
+			}
+			GripperState = 1;
+			Timestamp_Gripper = micros();
+		}
+
+		else if (GripperState != 0)
+		{
+			if ((hi2c1.State == HAL_I2C_STATE_READY) && (GripperState == 1))
+			{
+				{
+					uint8_t temp[1] = {0x23};
+					HAL_I2C_Master_Transmit_IT(&hi2c1, (0x23 << 1) , temp, 1);
+				}
+				GripperState = 2;
+			}
+
+			else if ((hi2c1.State == HAL_I2C_STATE_READY) && ( GripperState == 2 ))
+			{
+				{
+					HAL_I2C_Master_Receive_IT(&hi2c1, ((0x23 << 1) | 0b1), GripperStatus, 1);
+				}
+				GripperState = 1;
+			}
+			if (GripperStatus[0] == 0x12 )
+			{
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, 1);
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 1);
+				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 0);
+			}
+			else if (GripperStatus[0] == 0x34)
+			{
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, 1);
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 0);
+				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 0);
+			}
+			else if (GripperStatus[0] == 0x56)
+			{
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, 0);
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 0);
+				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 0);
+			}
+			else if (GripperStatus[0] == 0x78)
+			{
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, 1);
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, 1);
+				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 1);
+			}
+
+			if (micros() - Timestamp_Gripper >= 5100000)
+			{
+				GripperState = 0;
+				Munmunbot_State = STATE_PrepareDATA;
+				PID_Reset();
+			}
+		}
+
+
+	  }
+	  else if(GripperEnable == 0)
+	  {
+		 Munmunbot_State = STATE_PrepareDATA;
+	  }
+}
+
+
+/// เศษซากอารยธรรม ///
+//{
+//	// Error term
+////	PositionPIDController.OutputDesire = TrjStruc.AngularDisplacementDesire;
+////	PositionPIDController.NowError = PositionPIDController.OutputDesire - PositionPIDController.OutputFeedback;
+////
+////	// Update integral Value
+////	PositionPIDController.Integral_Value += PositionPIDController.NowError;
+////
+////
+////	PositionPIDController.ControllerOutput = (PositionPIDController.Kp*PositionPIDController.NowError)
+////					  +(PositionPIDController.Ki * PositionPIDController.Integral_Value)
+////					  +(PositionPIDController.Kd * (PositionPIDController.NowError-PositionPIDController.PreviousError))
+////					  +( TrjStruc.Alpha * PositionPIDController.offSet);
+////	PositionPIDController.PreviousError = PositionPIDController.NowError;
+//
+//
+//    // Error Term
+////    VelocityPIDController.OutputDesire = PositionPIDController.ControllerOutput + TrjStruc.AngularVelocityDesire;
+////    VelocityPIDController.NowError = VelocityPIDController.OutputDesire - VelocityPIDController.OutputFeedback;
+//
+////    // Calculate Output of the Controller
+////    VelocityPIDController.ControllerOutput = VelocityPIDController.PreviousControllerOutput +
+////    		(( VelocityPIDController.Kp + VelocityPIDController.Ki + VelocityPIDController.Kd ) * VelocityPIDController.NowError ) -
+////			(( VelocityPIDController.Kp + ( 2.0 * VelocityPIDController.Kd )) * VelocityPIDController.PreviousError ) +
+////			( VelocityPIDController.Kd *  VelocityPIDController.PreviousPreviousError )
+////			 +( TrjStruc.Alpha * VelocityPIDController.offSet );
+//
+//
+//    // Updating Process
+////    VelocityPIDController.PreviousPreviousError = VelocityPIDController.PreviousError;
+////    VelocityPIDController.PreviousError = VelocityPIDController.NowError;
+////    VelocityPIDController.PreviousControllerOutput =  VelocityPIDController.ControllerOutput;
+//
+////	// Error term
+////	VelocityPIDController.OutputDesire = PositionPIDController.ControllerOutput + TrjStruc.AngularVelocityDesire;
+////	VelocityPIDController.NowError = VelocityPIDController.OutputDesire - VelocityPIDController.OutputFeedback;
+////
+////	// Update integral Value
+////	VelocityPIDController.Integral_Value += VelocityPIDController.NowError;
+////
+////
+////	VelocityPIDController.ControllerOutput = (VelocityPIDController.Kp*VelocityPIDController.NowError)
+////					  +(VelocityPIDController.Ki * PositionPIDController.Integral_Value)
+////					  +(VelocityPIDController.Kd * (VelocityPIDController.NowError-VelocityPIDController.PreviousError))
+////					  +( TrjStruc.Alpha * VelocityPIDController.offSet);
+////	VelocityPIDController.PreviousError = VelocityPIDController.NowError;
+//
+//}
+
 
 
 /* USER CODE END 4 */
