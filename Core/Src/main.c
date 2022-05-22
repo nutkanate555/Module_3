@@ -221,6 +221,7 @@ float StabilizePosition = 0;
 
 PIDStructure PositionPIDController = {0};
 PIDStructure VelocityPIDController  = {0};
+PIDStructure StabilizerPIDController = {0};
 
 TrajectoryGenerationStructure TrjStruc = {0};
 ConverterUnitSystemStructure CUSSStruc = {0};
@@ -251,6 +252,7 @@ void TrajectoryGenerationCalculation();
 void TrajectoryGenerationProcess();
 
 void PIDController2in1();
+void StabilizerPID();
 
 void UARTInit(UARTStucrture *uart);
 void UARTResetStart(UARTStucrture *uart);
@@ -965,17 +967,11 @@ void LinkMovingPIDLoad()
 
 void StabilizerPIDLoad()
 {
-	PositionPIDController.Kp = 0.5;
-	PositionPIDController.Ki = 1.1;
-	PositionPIDController.Kd = 0.01;
-	PositionPIDController.offSet = 0;
-	PositionPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
-
-	VelocityPIDController.Kp = 0;
-	VelocityPIDController.Ki = 0;
-	VelocityPIDController.Kd = 0;
-	VelocityPIDController.offSet = 0;
-	VelocityPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
+	StabilizerPIDController.Kp = 0.5;
+	StabilizerPIDController.Ki = 1.1;
+	StabilizerPIDController.Kd = 0.01;
+	StabilizerPIDController.offSet = 0;
+	StabilizerPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 }
 
 
@@ -1206,10 +1202,6 @@ void TrajectoryGenerationProcess()
 						  + (TrjStruc.AngularVelocity*(TrjStruc.Equation_Realtime_Sec))
 						  + TrjStruc.Theta_Stamp_2;
 
-//				  Moving_Link_Task_Flag = 1;
-
-
-
 				  if ( TrjStruc.Subsubmode == 0 )
 				  {
 					  TrjStruc.AngularVelocityDesire = ( -1*TrjStruc.AngularAcceration*TrjStruc.Equation_Realtime_Sec )
@@ -1258,12 +1250,10 @@ void PIDController2in1()
     PositionPIDController.Integral_Value += PositionPIDController.NowError*PositionPIDController.SamplingTime;
     PositionPIDController.ControllerOutput = (PositionPIDController.Kp*PositionPIDController.NowError)
 					  +(PositionPIDController.Ki * PositionPIDController.Integral_Value)
-					  +(PositionPIDController.Kd * (PositionPIDController.NowError-PositionPIDController.PreviousError)/PositionPIDController.SamplingTime)
-					  +( TrjStruc.Alpha * PositionPIDController.offSet);
+					  +(PositionPIDController.Kd * (PositionPIDController.NowError-PositionPIDController.PreviousError)/PositionPIDController.SamplingTime);
     PositionPIDController.PreviousError = PositionPIDController.NowError;
 
     VelocityPIDController.OutputDesire = PositionPIDController.ControllerOutput + TrjStruc.AngularVelocityDesire;
-//    VelocityPIDController.OutputDesire = PositionPIDController.ControllerOutput;
     VelocityPIDController.NowError = VelocityPIDController.OutputDesire - VelocityPIDController.OutputFeedback;
     VelocityPIDController.Integral_Value += VelocityPIDController.NowError*VelocityPIDController.SamplingTime;
     VelocityPIDController.ControllerOutput = (VelocityPIDController.Kp*VelocityPIDController.NowError)
@@ -1274,6 +1264,17 @@ void PIDController2in1()
 
 }
 
+void StabilizerPID()
+{
+	StabilizerPIDController.OutputDesire = TrjStruc.AngularDisplacementDesire;
+	StabilizerPIDController.NowError = StabilizerPIDController.OutputDesire - StabilizerPIDController.OutputFeedback;
+	StabilizerPIDController.Integral_Value += StabilizerPIDController.NowError*StabilizerPIDController.SamplingTime;
+	StabilizerPIDController.ControllerOutput = (StabilizerPIDController.Kp*StabilizerPIDController.NowError)
+					  +(StabilizerPIDController.Ki * StabilizerPIDController.Integral_Value)
+					  +(StabilizerPIDController.Kd * (StabilizerPIDController.NowError-StabilizerPIDController.PreviousError)/StabilizerPIDController.SamplingTime);
+
+	StabilizerPIDController.PreviousError = StabilizerPIDController.NowError;
+}
 
 
 ///UART ZONE
@@ -1653,6 +1654,13 @@ void PID_Reset()
 	VelocityPIDController.NowError = 0;
 	VelocityPIDController.PreviousPreviousError = 0;
 	VelocityPIDController.PreviousControllerOutput = 0;
+
+	StabilizerPIDController.PreviousError = 0;
+	StabilizerPIDController.Integral_Value = 0;
+	StabilizerPIDController.ControllerOutput = 0;
+	StabilizerPIDController.NowError = 0;
+	StabilizerPIDController.PreviousPreviousError = 0;
+	StabilizerPIDController.PreviousControllerOutput = 0;
 }
 
 void LAMP_ON(uint8_t lampnumber)
@@ -1757,11 +1765,11 @@ void Stabilizing_the_LINK( float Position )
 {
 	if (micros()-TrjStruc.Loop_Timestamp >=  TrjStruc.Loop_Period)
 	{
-		StabilizerPIDLoad();
 		TrjStruc.AngularDisplacementDesire = Position;
 		EncoderVelocityAndPosition_Update();
-		PIDController2in1();  ///use only position
-		Plant_input = PositionPIDController.ControllerOutput;
+		StabilizerPIDLoad();
+		StabilizerPID();
+		Plant_input = StabilizerPIDController.ControllerOutput;
 
 		if (Plant_input >= 0) /// Setting DIR
 		{
