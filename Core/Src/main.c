@@ -217,11 +217,14 @@ uint8_t GripperState = 0;
 uint8_t GripperStatus[1] = {0};
 uint64_t Timestamp_Gripper = 0;
 
-uint8_t AcceptableError = 7;
+uint8_t AcceptableError = 8;
 float StabilizePosition = 0;
+float StabilizeVelocity = 0;
+
 
 PIDStructure PositionPIDController = {0};
 PIDStructure VelocityPIDController  = {0};
+PIDStructure PureVelocityPIDController = {0};
 PIDStructure StabilizerPIDController = {0};
 
 TrajectoryGenerationStructure TrjStruc = {0};
@@ -278,13 +281,14 @@ void HackTheLink( float Position );
 
 void SETHOME_StateMachine_Function();
 void SETHOME_TrajectoryGenerationPrepareDATA();
-
+void Controlling_the_LINK_Velo( float Velocity );
 
 void UpdateMunmunBotState();
 void EndEffectorWorkingState();
 
 void StabilizerPIDLoad();
 void LinkMovingPIDLoad();
+void VelocityPurePIDLoad();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -342,6 +346,7 @@ int main(void)
 
   StabilizerPIDLoad();
   LinkMovingPIDLoad();
+  VelocityPurePIDLoad();
 
   Encoder_SetHome_Position();
 
@@ -386,7 +391,9 @@ int main(void)
 
 	  	  case STATE_Idle:
 	  		  LAMP_ON(1);
+	  		  UpdateMunmunBotState();
 //	  		  Stabilizing_the_LINK( StabilizePosition );
+//	  		  Controlling_the_LINK_Velo( StabilizeVelocity );
 	  		  if ( sethomeTrigger == 1 )
 	  		  {
 	  			  Encoder_SetHome_Position();
@@ -458,7 +465,7 @@ int main(void)
 	   		  break;
 
 	  	  case STATE_End_Effector_Working:
-	  		  Stabilizing_the_LINK( StabilizePosition );
+	  		  UpdateMunmunBotState();
 	  		  EndEffectorWorkingState();
 	  		  Emergency_switch_trigger();
 	  		  break;
@@ -927,10 +934,10 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     	{
     		if (SethomeMode == SetHomeState_1)
     		{
-    			Encoder_SetHome_Position();
+//    			Encoder_SetHome_Position();
     			SethomeMode = SetHomeState_2;
-    			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, 0);
-				__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
+//    			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, 0);
+//				__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
     		}
     	}
 	}
@@ -951,7 +958,7 @@ void ConverterUnitSystemStructureInit(ConverterUnitSystemStructure *CUSSvar)
 
 void TrajectoryGenerationStructureInit(TrajectoryGenerationStructure *TGSvar , ConverterUnitSystemStructure *CUSSvar)
 {
-	TGSvar->AngularAccerationMax_Setting = (0.3*(CUSSvar->PPRxQEI))/(3.1416*2.0);
+	TGSvar->AngularAccerationMax_Setting = (0.4*(CUSSvar->PPRxQEI))/(3.1416*2.0);
 	TGSvar->AngularVelocityMax_Setting = ((CUSSvar->PPRxQEI)*10)/(60.0);  //pps
 	TGSvar->Start_Theta = CUSSStruc.PPRxQEI;  /// PPRxQEI == 0 degree
 	TGSvar->Mode = 0;
@@ -974,13 +981,13 @@ void LinkMovingPIDLoad()
 	PositionPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 
 	VelocityPIDController.Kp = 6;
-	VelocityPIDController.Ki = 17;
+	VelocityPIDController.Ki = 10;
 	VelocityPIDController.Kd = 0.00005;
 	VelocityPIDController.offSet = 1500;
 	VelocityPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 }
 
-void LinkMovingPID90to355Load()
+void LinkMovingPID40to355Load()
 {
 	PositionPIDController.Kp = 0;
 	PositionPIDController.Ki = 0;
@@ -989,7 +996,22 @@ void LinkMovingPID90to355Load()
 	PositionPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 
 	VelocityPIDController.Kp = 5;
-	VelocityPIDController.Ki = 15;
+	VelocityPIDController.Ki = 10;
+	VelocityPIDController.Kd = 0.00005;
+	VelocityPIDController.offSet = 1500;
+	VelocityPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
+}
+
+void LinkMovingPID20to40Load()
+{
+	PositionPIDController.Kp = 0;
+	PositionPIDController.Ki = 0;
+	PositionPIDController.Kd = 0;
+	PositionPIDController.offSet = 0;
+	PositionPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
+
+	VelocityPIDController.Kp = 5;
+	VelocityPIDController.Ki = 10;
 	VelocityPIDController.Kd = 0.00005;
 	VelocityPIDController.offSet = 1500;
 	VelocityPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
@@ -1006,6 +1028,14 @@ void StabilizerPIDLoad()
 	StabilizerPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 }
 
+void VelocityPurePIDLoad()
+{
+	PureVelocityPIDController.Kp = 5;
+	PureVelocityPIDController.Ki = 15;
+	PureVelocityPIDController.Kd = 0.00005;
+	PureVelocityPIDController.offSet = 1500;
+	PureVelocityPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
+}
 
 
 void TrajectoryGenerationVelocityMaxSetting(TrajectoryGenerationStructure *TGSvar , ConverterUnitSystemStructure *CUSSvar)
@@ -1320,6 +1350,19 @@ void StabilizerPID()
 
 	StabilizerPIDController.PreviousError = StabilizerPIDController.NowError;
 }
+
+void PureVeloPID()
+{
+	PureVelocityPIDController.OutputDesire = TrjStruc.AngularVelocityDesire;
+	PureVelocityPIDController.NowError = PureVelocityPIDController.OutputDesire - VelocityPIDController.OutputFeedback;
+	PureVelocityPIDController.Integral_Value += PureVelocityPIDController.NowError*PureVelocityPIDController.SamplingTime;
+	PureVelocityPIDController.ControllerOutput = (PureVelocityPIDController.Kp*PureVelocityPIDController.NowError)
+					  +(PureVelocityPIDController.Ki * PureVelocityPIDController.Integral_Value)
+					  +(PureVelocityPIDController.Kd * (PureVelocityPIDController.NowError-PureVelocityPIDController.PreviousError)/PureVelocityPIDController.SamplingTime)
+					  +( TrjStruc.Alpha * PureVelocityPIDController.offSet );
+	PureVelocityPIDController.PreviousError = PureVelocityPIDController.NowError;
+}
+
 
 
 ///UART ZONE
@@ -1706,6 +1749,13 @@ void PID_Reset()
 	StabilizerPIDController.NowError = 0;
 	StabilizerPIDController.PreviousPreviousError = 0;
 	StabilizerPIDController.PreviousControllerOutput = 0;
+
+	PureVelocityPIDController.PreviousError = 0;
+	PureVelocityPIDController.Integral_Value = 0;
+	PureVelocityPIDController.ControllerOutput = 0;
+	PureVelocityPIDController.NowError = 0;
+	PureVelocityPIDController.PreviousPreviousError = 0;
+	PureVelocityPIDController.PreviousControllerOutput = 0;
 }
 
 void LAMP_ON(uint8_t lampnumber)
@@ -1837,6 +1887,38 @@ void Stabilizing_the_LINK( float Position )
 	}
 }
 
+void Controlling_the_LINK_Velo( float Velocity )
+{
+	if (micros()-TrjStruc.Loop_Timestamp >=  TrjStruc.Loop_Period)
+	{
+		TrjStruc.AngularVelocityDesire = Velocity;
+		EncoderVelocityAndPosition_Update();
+		PureVeloPID();
+		Plant_input = PureVelocityPIDController.ControllerOutput;
+
+		if (Plant_input >= 0) /// Setting DIR
+		{
+		  DCMotorStruc.DIR = 1;
+		  DCMotorStruc.PWMOut = (uint32_t) (Plant_input);
+		}
+		else if (Plant_input < 0)
+		{
+		  DCMotorStruc.DIR = 0;
+		  DCMotorStruc.PWMOut = (uint32_t) (Plant_input * -1.0);
+		}
+
+		if (DCMotorStruc.PWMOut > 10000)   /// Saturation Output
+		{
+		 DCMotorStruc.PWMOut = 10000;
+		}
+
+		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, DCMotorStruc.DIR);
+
+		__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, DCMotorStruc.PWMOut); ///Setting PWM Pin
+		TrjStruc.Loop_Timestamp = micros();
+	}
+}
+
 void HackTheLink( float Position )
 {
 	if (micros()-TrjStruc.Loop_Timestamp >=  TrjStruc.Loop_Period)
@@ -1851,12 +1933,14 @@ void HackTheLink( float Position )
 		}
 		else if ( Position - PositionPIDController.OutputFeedback >= 0)
 		{
-			Plant_input = 2300;
+			TrjStruc.AngularVelocityDesire = 0.5*(8192.0/60.0);
 		}
 		else if ( Position - PositionPIDController.OutputFeedback < 0)
 		{
-			Plant_input = -2300;
+			TrjStruc.AngularVelocityDesire = -0.5*(8192.0/60.0);
 		}
+		PureVeloPID();
+		Plant_input = PureVelocityPIDController.ControllerOutput;
 
 		if (Plant_input >= 0) /// Setting DIR
 		{
@@ -1887,7 +1971,7 @@ void SETHOME_StateMachine_Function()
 	{
 		case SetHomeState_0:
 			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, 0);
-			__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 2500);
+			__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 2700);
 			SethomeMode = SetHomeState_1;
 			break;
 		case SetHomeState_1:
