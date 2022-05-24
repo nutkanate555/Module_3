@@ -103,6 +103,7 @@ typedef enum
 	STATE_Calculation,
 	STATE_Link_Moving,
 	STATE_Stabilized_Link,
+	STATE_Verified,
 	STATE_End_Effector_Working,
 	STATE_SetHome
 } Robot_STATE;
@@ -221,6 +222,7 @@ uint8_t AcceptableError = 8;
 float StabilizePosition = 0;
 float StabilizeVelocity = 0;
 
+uint64_t Verified_Timestamp = 0;
 
 PIDStructure PositionPIDController = {0};
 PIDStructure VelocityPIDController  = {0};
@@ -442,28 +444,51 @@ int main(void)
 					  (PositionPIDController.OutputFeedback >= TrjStruc.Desire_Theta - AcceptableError) &&
 					  (Moving_Link_Task_Flag == 1))
 			  {
-				  if(MovingLinkMode == LMM_Set_Pos_Directly)
-				  {
-					Munmunbot_State = STATE_Idle;
-					MovingLinkMode = LMM_Not_Set;
-					StabilizePosition = TrjStruc.Desire_Theta;
+				    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
+					Munmunbot_State = STATE_Verified;
+					Verified_Timestamp = micros();
 					PID_Reset();
-					ACK2Return(&UART2);
-				  }
-
-				  else if ((MovingLinkMode == LMM_Set_Goal_1_Station) || (MovingLinkMode == LMM_Set_Goal_n_Station))
-				  {
-					Munmunbot_State = STATE_End_Effector_Working;
-					GripperState = 0;
-					StabilizePosition = TrjStruc.Desire_Theta;
-					PID_Reset();
-				  }
-				 __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
-				 Moving_Link_Task_Flag = 0;
 			  }
 	   		  Emergency_switch_trigger();
 	   		  break;
+	   	  case STATE_Verified:
+	   	  {
+	   		  LAMP_ON(3);
+	   		  UpdateMunmunBotState();
+	   		  if ( micros()-Verified_Timestamp >= 0.5*1000000  )
+	   		  {
 
+				  if ((PositionPIDController.OutputFeedback <= TrjStruc.Desire_Theta + AcceptableError) &&
+						  (PositionPIDController.OutputFeedback >= TrjStruc.Desire_Theta - AcceptableError) &&
+						  (Moving_Link_Task_Flag == 1))
+				  {
+					  if(MovingLinkMode == LMM_Set_Pos_Directly)
+					  {
+						Munmunbot_State = STATE_Idle;
+						MovingLinkMode = LMM_Not_Set;
+						StabilizePosition = TrjStruc.Desire_Theta;
+						PID_Reset();
+						ACK2Return(&UART2);
+					  }
+
+					  else if ((MovingLinkMode == LMM_Set_Goal_1_Station) || (MovingLinkMode == LMM_Set_Goal_n_Station))
+					  {
+						Munmunbot_State = STATE_End_Effector_Working;
+						GripperState = 0;
+						StabilizePosition = TrjStruc.Desire_Theta;
+						PID_Reset();
+					  }
+					 __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
+					 Moving_Link_Task_Flag = 0;
+				  }
+				  else
+				  {
+					  Munmunbot_State =  STATE_Stabilized_Link;
+				  }
+	   		  }
+	   		  Emergency_switch_trigger();
+	   		  break;
+	   	  }
 	  	  case STATE_End_Effector_Working:
 	  		  UpdateMunmunBotState();
 	  		  EndEffectorWorkingState();
