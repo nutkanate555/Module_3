@@ -213,7 +213,7 @@ uint8_t Moving_Link_Task_Flag = 0;
 
 uint8_t sethomeTrigger = 0;
 
-uint8_t GripperEnable = 0;
+uint8_t GripperEnable = 1;
 uint8_t GripperState = 0;
 uint8_t GripperStatus[1] = {0};
 uint64_t Timestamp_Gripper = 0;
@@ -233,7 +233,11 @@ TrajectoryGenerationStructure TrjStruc = {0};
 ConverterUnitSystemStructure CUSSStruc = {0};
 
 uint8_t PIDTunerMode =  0;
+uint8_t EndeffectorTestMode = 1;
+
 float EstimatedAngularAcceration = 0;
+
+uint64_t Timestamp_EndEffectorDebug = 0;
 
 /* USER CODE END PV */
 
@@ -269,6 +273,8 @@ void UARTTxWrite(UARTStucrture *uart, uint8_t *pData, uint16_t len);
 void Munmunbot_Protocol(int16_t dataIn,UARTStucrture *uart);
 void Encoder_SetHome_Position();
 
+void EndEffectorDebug();
+
 void ACK1Return(UARTStucrture *uart);
 void ACK2Return(UARTStucrture *uart);
 
@@ -291,6 +297,10 @@ void EndEffectorWorkingState();
 void StabilizerPIDLoad();
 void LinkMovingPIDLoad();
 void VelocityPurePIDLoad();
+
+void LinkMovingPID45to355Load();
+void LinkMovingPID10to45Load();
+void LinkMovingPID0to9Load();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -358,6 +368,20 @@ int main(void)
   UART2.TxLen = 255;
   UARTInit(&UART2);
   UARTResetStart(&UART2);
+
+  HAL_Delay( 100 );
+  if (EndeffectorTestMode == 1)
+  {
+	  while (1)
+	  {
+		  {
+				uint8_t temp[1] = {0x45};
+				HAL_I2C_Master_Transmit_IT(&hi2c1, (0x23 << 1) , temp, 1);
+				HAL_Delay( 6000 );
+		  }
+	  }
+  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -378,6 +402,7 @@ int main(void)
 	  switch (Munmunbot_State)
 	  {
 	  	  case STATE_Disconnected:
+	  		  EndEffectorDebug();
 	  		  if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_13) == 0)
 	  		  {
 	  			  LAMP_ON(0);
@@ -437,7 +462,7 @@ int main(void)
 	  		  break;
 
 	   	  case STATE_Stabilized_Link:
-	   		  LAMP_ON(3);
+	   		  LAMP_ON(2);
 //	   		  Stabilizing_the_LINK( StabilizePosition );
 	   		  HackTheLink( StabilizePosition );
 			  if ((PositionPIDController.OutputFeedback <= TrjStruc.Desire_Theta + AcceptableError) &&
@@ -453,7 +478,7 @@ int main(void)
 	   		  break;
 	   	  case STATE_Verified:
 	   	  {
-	   		  LAMP_ON(3);
+	   		  LAMP_ON(2);
 	   		  UpdateMunmunBotState();
 	   		  if ( micros()-Verified_Timestamp >= 0.5*1000000  )
 	   		  {
@@ -953,7 +978,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    if ((GPIO_Pin == GPIO_PIN_13) || (GPIO_Pin == GPIO_PIN_8))  //13 -> BlueButton, 8 -> Limitswitch
+    if ((GPIO_Pin == GPIO_PIN_8))  //13 -> BlueButton, 8 -> Limitswitch
 	{
     	if (Munmunbot_State == STATE_SetHome)
     	{
@@ -966,6 +991,21 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     		}
     	}
 	}
+    if (GPIO_Pin == GPIO_PIN_13)  //13 -> BlueButton, 8 -> Limitswitch
+	{
+    	if (Munmunbot_State == STATE_SetHome)
+    	{
+    		if (SethomeMode == SetHomeState_1)
+    		{
+//    			Encoder_SetHome_Position();
+    			SethomeMode = SetHomeState_2;
+//    			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, 0);
+//				__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
+    		}
+    	}
+
+	}
+
 
 }
 
@@ -1012,7 +1052,7 @@ void LinkMovingPIDLoad()
 	VelocityPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 }
 
-void LinkMovingPID40to355Load()
+void LinkMovingPID45to355Load()
 {
 	PositionPIDController.Kp = 0;
 	PositionPIDController.Ki = 0;
@@ -1022,12 +1062,28 @@ void LinkMovingPID40to355Load()
 
 	VelocityPIDController.Kp = 5;
 	VelocityPIDController.Ki = 10;
+//	VelocityPIDController.Kd = 0.00005;
+	VelocityPIDController.Kd = 2;
+	VelocityPIDController.offSet = 1500;
+	VelocityPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
+}
+
+void LinkMovingPID10to45Load()
+{
+	PositionPIDController.Kp = 0;
+	PositionPIDController.Ki = 0;
+	PositionPIDController.Kd = 0;
+	PositionPIDController.offSet = 0;
+	PositionPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
+
+	VelocityPIDController.Kp = 3.5;
+	VelocityPIDController.Ki = 7;
 	VelocityPIDController.Kd = 0.00005;
 	VelocityPIDController.offSet = 1500;
 	VelocityPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 }
 
-void LinkMovingPID20to40Load()
+void LinkMovingPID0to9Load()
 {
 	PositionPIDController.Kp = 0;
 	PositionPIDController.Ki = 0;
@@ -1035,8 +1091,8 @@ void LinkMovingPID20to40Load()
 	PositionPIDController.offSet = 0;
 	PositionPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
 
-	VelocityPIDController.Kp = 5;
-	VelocityPIDController.Ki = 10;
+	VelocityPIDController.Kp = 1;
+	VelocityPIDController.Ki = 5;
 	VelocityPIDController.Kd = 0.00005;
 	VelocityPIDController.offSet = 1500;
 	VelocityPIDController.SamplingTime = ( TrjStruc.Loop_Period )/1000000.0;
@@ -1163,6 +1219,22 @@ void TrajectoryGenerationCalculation()
 		 TrjStruc.Abs_Delta_Theta = TrjStruc.Delta_Theta;
 		 TrjStruc.Alpha = 1;
 	  }
+
+	 if ( PIDTunerMode == 0 )
+	 {
+		 if ( TrjStruc.Abs_Delta_Theta >= ( 45*8192.0/360.0 ) )
+		 {
+			 LinkMovingPID45to355Load();
+		 }
+		 else if ( ( TrjStruc.Abs_Delta_Theta >= ( 10*8192.0/360.0 ) ) && ( TrjStruc.Abs_Delta_Theta < ( 45*8192.0/360.0 ) ) )
+		 {
+			 LinkMovingPID10to45Load();
+		 }
+		 else if ( ( TrjStruc.Abs_Delta_Theta >= ( 0*8192.0/360.0 ) ) && ( TrjStruc.Abs_Delta_Theta < ( 10*8192.0/360.0 ) ) )
+		 {
+			 LinkMovingPID0to9Load();
+		 }
+	 }
 
 	  if (TrjStruc.Abs_Delta_Theta < TrjStruc.Theta_min_for_LSPB)   ///Triangular mode0
 	  {
@@ -2025,6 +2097,18 @@ void UpdateMunmunBotState()
 	}
 }
 
+void EndEffectorDebug()
+{
+	if (micros()-Timestamp_EndEffectorDebug >= 5*1000000.0)
+	{
+		  {
+				uint8_t temp[1] = {0x45};
+				HAL_I2C_Master_Transmit_IT(&hi2c1, (0x23 << 1) , temp, 1);
+		  }
+		Timestamp_EndEffectorDebug = micros();
+	}
+}
+
 void EndEffectorWorkingState()
 {
 	  if(GripperEnable == 1)
@@ -2032,6 +2116,7 @@ void EndEffectorWorkingState()
 		if (GripperState == 0)
 		{
 			{
+				LAMP_ON(3);
 				uint8_t temp[1] = {0x45};
 				HAL_I2C_Master_Transmit_IT(&hi2c1, (0x23 << 1) , temp, 1);
 			}
